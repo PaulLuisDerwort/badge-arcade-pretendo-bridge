@@ -1,0 +1,7 @@
+installer/build/
+installer/data/
+installer/*.cia
+installer/*.3dsx
+installer/*.elf
+installer/*.smdh
+dist/

@@ -1,55 +1,55 @@
 {
     "storeInfo": {
-        "title": "Badge Arcade Pretendo-Bridge",
+        "title": "Badge Arcade Pretendo Bridge",
         "author": "PaulLuisDerwort",
-        "description": "Badge Arcade offline (EUR 1.3.1) mit Pretendo-Bridge: Spielstand gilt unter NNID und PNID.",
+        "description": "Badge Arcade offline (EUR 1.3.1) with the Pretendo bridge: save data works under both NNID and PNID.",
         "file": "pretendo-bridge.unistore",
         "url": "https://raw.githubusercontent.com/PaulLuisDerwort/badge-arcade-pretendo-bridge/main/pretendo-bridge.unistore",
         "version": 4,
-        "revision": 1
+        "revision": 2
     },
     "storeContent": [
         {
             "info": {
-                "title": "Badge Arcade Pretendo-Bridge",
-                "author": "GrouchoGlasses42, Bridge: PaulLuisDerwort",
-                "description": "Nintendo Badge Arcade offline mit Kranspielen, auch im Pretendo-Modus von Nimbus. Basiert auf badge-arcade-offline v0.5.4 plus einem Hook, der die Konto-Pruefung des Spielstands ueberspringt. Nur EUR mit Update 1.3.1. Ersetzt einen vorhandenen Reclawed- oder Offline-Patch.",
+                "title": "Badge Arcade Pretendo Bridge",
+                "author": "GrouchoGlasses42, bridge: PaulLuisDerwort",
+                "description": "Nintendo Badge Arcade offline with the crane games, also in Nimbus' Pretendo mode. Based on badge-arcade-offline v0.5.4 plus one hook that skips the save data's account check. EUR with update 1.3.1 only. Replaces an existing Reclawed or offline patch.",
                 "category": ["utility"],
                 "console": ["3DS"],
                 "version": "v0.5.4-bridge.1",
-                "last_updated": "2026-11-26 at 00:30 (UTC+1)",
+                "last_updated": "2026-11-26 at 01:00 (UTC+1)",
                 "license": "mit",
                 "llm_generation": "yes",
                 "installed_files": ["sdmc:/luma/titles/0004000000153600/code.ips"]
             },
-            "Installieren: Badges ins HOME-Menue": [
+            "Install: badges go to HOME Menu": [
                 {
                     "type": "promptMessage",
-                    "message": "Nur fuer EUR Badge Arcade mit Update 1.3.1.\n\nVorher sichern: Extdata mit Checkpoint, HOME-Badges mit Simple Badge Injector.\n\nEin vorhandener Reclawed-Patch wird ersetzt. Fortfahren?"
+                    "message": "Only for EUR Badge Arcade with update 1.3.1.\n\nBack up first: extdata with Checkpoint, HOME Menu badges with Simple Badge Injector.\n\nAn existing Reclawed patch gets replaced. Continue?"
                 },
                 {
                     "type": "downloadFile",
                     "file": "https://raw.githubusercontent.com/PaulLuisDerwort/badge-arcade-pretendo-bridge/main/ips/home-menu/code.ips",
                     "output": "sdmc:/luma/titles/0004000000153600/code.ips",
-                    "message": "Lade Pretendo-Bridge (HOME-Menue)..."
+                    "message": "Downloading Pretendo bridge (HOME Menu)..."
                 }
             ],
-            "Installieren: Badges nur im Spiel": [
+            "Install: badges stay in game": [
                 {
                     "type": "promptMessage",
-                    "message": "Nur fuer EUR Badge Arcade mit Update 1.3.1.\n\nDiese Variante schreibt nichts ins HOME-Menue und laesst eigene Badges unangetastet.\n\nFortfahren?"
+                    "message": "Only for EUR Badge Arcade with update 1.3.1.\n\nThis variant writes nothing to the HOME Menu and leaves custom badges alone.\n\nContinue?"
                 },
                 {
                     "type": "downloadFile",
                     "file": "https://raw.githubusercontent.com/PaulLuisDerwort/badge-arcade-pretendo-bridge/main/ips/game-only/code.ips",
                     "output": "sdmc:/luma/titles/0004000000153600/code.ips",
-                    "message": "Lade Pretendo-Bridge (nur im Spiel)..."
+                    "message": "Downloading Pretendo bridge (game only)..."
                 }
             ],
-            "Deinstallieren": [
+            "Uninstall": [
                 {
                     "type": "promptMessage",
-                    "message": "Patch-Datei fuer Badge Arcade loeschen? Spielstand und Badges bleiben erhalten."
+                    "message": "Delete the Badge Arcade patch file? Save data and badges are kept."
                 },
                 {
                     "type": "deleteFile",

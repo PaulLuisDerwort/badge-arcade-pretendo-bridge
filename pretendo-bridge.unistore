@@ -1,0 +1,61 @@
+{
+    "storeInfo": {
+        "title": "Badge Arcade Pretendo-Bridge",
+        "author": "PaulLuisDerwort",
+        "description": "Badge Arcade offline (EUR 1.3.1) mit Pretendo-Bridge: Spielstand gilt unter NNID und PNID.",
+        "file": "pretendo-bridge.unistore",
+        "url": "https://raw.githubusercontent.com/PaulLuisDerwort/badge-arcade-pretendo-bridge/main/pretendo-bridge.unistore",
+        "version": 4,
+        "revision": 1
+    },
+    "storeContent": [
+        {
+            "info": {
+                "title": "Badge Arcade Pretendo-Bridge",
+                "author": "GrouchoGlasses42, Bridge: PaulLuisDerwort",
+                "description": "Nintendo Badge Arcade offline mit Kranspielen, auch im Pretendo-Modus von Nimbus. Basiert auf badge-arcade-offline v0.5.4 plus einem Hook, der die Konto-Pruefung des Spielstands ueberspringt. Nur EUR mit Update 1.3.1. Ersetzt einen vorhandenen Reclawed- oder Offline-Patch.",
+                "category": ["utility"],
+                "console": ["3DS"],
+                "version": "v0.5.4-bridge.1",
+                "last_updated": "2026-11-26 at 00:30 (UTC+1)",
+                "license": "mit",
+                "llm_generation": "yes",
+                "installed_files": ["sdmc:/luma/titles/0004000000153600/code.ips"]
+            },
+            "Installieren: Badges ins HOME-Menue": [
+                {
+                    "type": "promptMessage",
+                    "message": "Nur fuer EUR Badge Arcade mit Update 1.3.1.\n\nVorher sichern: Extdata mit Checkpoint, HOME-Badges mit Simple Badge Injector.\n\nEin vorhandener Reclawed-Patch wird ersetzt. Fortfahren?"
+                },
+                {
+                    "type": "downloadFile",
+                    "file": "https://raw.githubusercontent.com/PaulLuisDerwort/badge-arcade-pretendo-bridge/main/ips/home-menu/code.ips",
+                    "output": "sdmc:/luma/titles/0004000000153600/code.ips",
+                    "message": "Lade Pretendo-Bridge (HOME-Menue)..."
+                }
+            ],
+            "Installieren: Badges nur im Spiel": [
+                {
+                    "type": "promptMessage",
+                    "message": "Nur fuer EUR Badge Arcade mit Update 1.3.1.\n\nDiese Variante schreibt nichts ins HOME-Menue und laesst eigene Badges unangetastet.\n\nFortfahren?"
+                },
+                {
+                    "type": "downloadFile",
+                    "file": "https://raw.githubusercontent.com/PaulLuisDerwort/badge-arcade-pretendo-bridge/main/ips/game-only/code.ips",
+                    "output": "sdmc:/luma/titles/0004000000153600/code.ips",
+                    "message": "Lade Pretendo-Bridge (nur im Spiel)..."
+                }
+            ],
+            "Deinstallieren": [
+                {
+                    "type": "promptMessage",
+                    "message": "Patch-Datei fuer Badge Arcade loeschen? Spielstand und Badges bleiben erhalten."
+                },
+                {
+                    "type": "deleteFile",
+                    "file": "sdmc:/luma/titles/0004000000153600/code.ips"
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,14 @@
+--- a/src/badge_patch.py	2026-11-26 00:23:43.538215383 +0100
++++ b/src/badge_patch.py	2026-11-26 00:29:12.870328116 +0100
+@@ -64,6 +64,11 @@
+     0x28FBAC: "badge_persistent_id",
+     0x2BBE04: "badge_home_unavailable",
+     0x2BCBD0: "badge_return_zero",
++    # Pretendo bridge: the load-side save account check compares the save's
++    # stored account ID with the active ACT account. Nimbus switches between
++    # the NNID and PNID accounts, so accept the save under either account.
++    # The next save write stores the active account's ID as before.
++    0x2CD3A0: "badge_return_true",
+     0x2E8C44: "badge_home_result",
+     0x2EFDD8: "badge_return",
+     0x2F1B34: "badge_home_categories",

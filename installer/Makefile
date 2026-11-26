@@ -31,7 +31,7 @@ VERSION_MINOR	:=	1
 VERSION_MICRO	:=	0
 # Non-empty VERSION_TAG publishes a pre-release (v<version>-<tag>); the FBI QR
 # code keeps pointing to the latest full release.
-VERSION_TAG	:=	beta1
+VERSION_TAG	:=	beta2
 VERSION		:=	$(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)$(if $(VERSION_TAG),-$(VERSION_TAG),)
 
 META		:=	meta

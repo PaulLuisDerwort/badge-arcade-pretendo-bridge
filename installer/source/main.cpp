@@ -65,6 +65,7 @@ const char* const PACK_DIR = APP_DIR "/spotpass";
 const char* const CACHE_DIR = APP_DIR "/cache";
 const char* const STAGE_DIR = APP_DIR "/build";
 const char* const INPUT_DIR = APP_DIR "/input";
+const char* const LOG_PATH = APP_DIR "/log.txt";
 const char* const LUMA_CONFIG_PATH = "sdmc:/luma/config.ini";
 const char* const LUMA_CONFIG_BACKUP = "sdmc:/luma/config.ini.pretendo-bridge.bak";
 constexpr size_t LUMA_CONFIG_MAX_SIZE = 0x2400;
@@ -144,19 +145,36 @@ bool sel_home = true;
 int sel_row = 0;  // 0 = mode, 1 = badges
 bool restart_pending = false;
 bool extdata_mounted = false;
+FILE* log_file = nullptr;     // sdmc:/3ds/pretendo-bridge/log.txt, every message
+const char* stage = "";       // current install step, for error reports
 
 // ------------------------------------------------------------------ output
 
-void logv(const char* color, const char* fmt, va_list ap) {
+void logv(const char* color, const char* level, const char* fmt, va_list ap) {
+    char line[512];
+    vsnprintf(line, sizeof(line), fmt, ap);
     consoleSelect(&bottom);
-    printf("%s", color);
-    vprintf(fmt, ap);
-    printf(C_RESET "\n");
+    printf("%s%s" C_RESET "\n", color, line);
+    if (log_file) {
+        fprintf(log_file, "%s%s\n", level, line[0] == '\n' ? line + 1 : line);
+        fflush(log_file);
+    }
 }
-void log_info(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_RESET, fmt, ap); va_end(ap); }
-void log_ok(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_GREEN, fmt, ap); va_end(ap); }
-void log_warn(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_YELLOW, fmt, ap); va_end(ap); }
-void log_err(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_RED, fmt, ap); va_end(ap); }
+// Only to the log file (details that would clutter the screen).
+void log_detail(const char* fmt, ...) {
+    if (!log_file) return;
+    va_list ap;
+    va_start(ap, fmt);
+    fputs("      ", log_file);
+    vfprintf(log_file, fmt, ap);
+    fputc('\n', log_file);
+    va_end(ap);
+    fflush(log_file);
+}
+void log_info(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_RESET, "      ", fmt, ap); va_end(ap); }
+void log_ok(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_GREEN, "OK    ", fmt, ap); va_end(ap); }
+void log_warn(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_YELLOW, "WARN  ", fmt, ap); va_end(ap); }
+void log_err(const char* fmt, ...) { va_list ap; va_start(ap, fmt); logv(C_RED, "ERROR ", fmt, ap); va_end(ap); }
 
 void present() {
     gfxFlushBuffers();
@@ -512,31 +530,43 @@ struct Inputs {
 };
 
 bool open_inputs(Inputs& in) {
-    if (R_SUCCEEDED(romfsMountFromTitle(BASE_TID, MEDIATYPE_SD, "nbabase"))) {
-        if (R_SUCCEEDED(romfsMountFromTitle(UPDATE_TID, MEDIATYPE_SD, "nbaupd"))) {
-            in.mounted = true;
-            in.base = "nbabase:/region_EUR/common/sharc/pc.sarc";
-            in.update = "nbaupd:/region_EUR/common/sharc/pc.sarc";
-            in.schedule = "nbaupd:/region_common/Schedule.xml";
-            if (file_exists(in.base) && file_exists(in.update) && file_exists(in.schedule)) return true;
-        } else {
-            romfsUnmount("nbabase");
-        }
+    Result base_r = romfsMountFromTitle(BASE_TID, MEDIATYPE_SD, "nbabase");
+    Result update_r = R_SUCCEEDED(base_r) ? romfsMountFromTitle(UPDATE_TID, MEDIATYPE_SD, "nbaupd") : base_r;
+    log_detail("RomFS mount: base 0x%08lX, update 0x%08lX", (unsigned long)base_r, (unsigned long)update_r);
+    if (R_SUCCEEDED(base_r) && R_SUCCEEDED(update_r)) {
+        in.mounted = true;
+        in.base = "nbabase:/region_EUR/common/sharc/pc.sarc";
+        in.update = "nbaupd:/region_EUR/common/sharc/pc.sarc";
+        in.schedule = "nbaupd:/region_common/Schedule.xml";
+        bool b = file_exists(in.base), u = file_exists(in.update), s = file_exists(in.schedule);
+        log_detail("RomFS files: base pc.sarc %d, update pc.sarc %d, Schedule.xml %d", b, u, s);
+        if (b && u && s) return true;
+    } else if (R_SUCCEEDED(base_r)) {
+        romfsUnmount("nbabase");
     }
     // Fallback: files exported with GodMode9 (badge-arcade-offline README, step 3).
     in.base = std::string(INPUT_DIR) + "/base-pc.sarc";
     in.update = std::string(INPUT_DIR) + "/pc.sarc";
     in.schedule = std::string(INPUT_DIR) + "/Schedule.xml";
-    if (file_exists(in.base) && file_exists(in.update) && file_exists(in.schedule)) return true;
-    log_err("Can't read the game's files from the console.");
+    if (file_exists(in.base) && file_exists(in.update) && file_exists(in.schedule)) {
+        log_info("Using the exported files in /3ds/pretendo-bridge/input.");
+        return true;
+    }
+    log_err("Can't read the game's files from the console (code 0x%08lX).",
+            (unsigned long)(R_FAILED(base_r) ? base_r : update_r));
     log_info("Export base-pc.sarc, pc.sarc and Schedule.xml with GodMode9 to /3ds/pretendo-bridge/input.");
     return false;
 }
 
 std::string catalog_source(const nba::Progress& progress) {
-    if (!st.sd_allbadge.empty()) return spotpass::open_pack(st.sd_allbadge, CACHE_DIR, progress);
-    if (st.console_allbadge) return "nbaext:/allbadge.sarc";
-    return "";
+    std::string path;
+    if (!st.sd_allbadge.empty()) path = spotpass::open_pack(st.sd_allbadge, CACHE_DIR, progress);
+    else if (st.console_allbadge) path = "nbaext:/allbadge.sarc";
+    if (!path.empty()) {
+        log_detail("Badge catalog: %s", path.c_str());
+        nba::read_allbadge(nba::Asset::file(path));  // throws if it isn't the full catalog
+    }
+    return path;
 }
 
 bool write_patch(Kind kind, bool home) {
@@ -548,9 +578,12 @@ bool write_patch(Kind kind, bool home) {
     return true;
 }
 
+bool swapped = false;  // the previous mode's files were touched
+
 bool build_and_install(const ModeEntry& m, bool home) {
     auto progress = progress_printer();
     Inputs in;
+    stage = "reading the installed game";
     log_info("Reading the installed game...");
     present();
     if (!open_inputs(in)) return false;
@@ -562,24 +595,42 @@ bool build_and_install(const ModeEntry& m, bool home) {
     request.home = home;
     request.expanded = m.kind == Kind::Expanded;
 
-    std::string catalog = catalog_source(progress);
+    stage = "reading the badge catalog";
+    std::string catalog;
+    if (m.kind == Kind::Expanded) {
+        // Expanded works without the catalog; it only adds older badges to the viewer.
+        try {
+            catalog = catalog_source(progress);
+        } catch (const std::exception& e) {
+            printf("\n");
+            log_warn("Badge catalog not usable (%s). Building without it.", e.what());
+            catalog.clear();
+        }
+    } else {
+        catalog = catalog_source(progress);
+    }
     if (!catalog.empty()) request.allbadge = std::make_shared<nba::Asset>(nba::Asset::file(catalog));
     if (m.kind == Kind::Week) {
         if (catalog.empty()) {
             log_err("Weeks need the badge catalog (allbadge_v131) in /3ds/pretendo-bridge/spotpass.");
             return false;
         }
+        stage = "reading the week's SpotPass pack";
         std::string week = spotpass::open_pack(m.pack, CACHE_DIR, progress);
         request.week = std::make_shared<nba::Week>(nba::read_week(nba::Asset::file(week)));
     }
 
+    stage = "building the catalog";
     remove_mode_files(STAGE_DIR);
     log_info("\nBuilding %s...", m.label.c_str());
     present();
     nba::Catalog result = nba::build_content(request, STAGE_DIR, progress);
     printf("\n");
+    log_detail("Built: %u machines, %u badges, %s", result.machines, result.prizes, result.selection.c_str());
 
     // Swap the files in: first remove the old mode, then move the new one.
+    stage = "swapping the files in luma/titles";
+    swapped = true;
     if (!remove_mode_files(TITLE_DIR)) {
         log_err("Can't remove the previous mode's files.");
         return false;
@@ -608,26 +659,40 @@ void install() {
     const ModeEntry m = st.modes[sel_mode];
     bool other = st.installed == State::Installed::Other;
     bool ok = false;
+    swapped = false;
+    stage = "starting";
+    log_detail("--- Install %s, badges %s", m.label.c_str(), sel_home ? "HOME Menu" : "game only");
+    log_detail("Free memory: %lu KiB", (unsigned long)(osGetMemRegionFree(MEMREGION_APPLICATION) / 1024));
+    u64 started = osGetTime();
     aptSetHomeAllowed(false);
     try {
         if (m.kind == Kind::Vanilla) {
+            stage = "writing the patch";
+            swapped = true;
             ok = remove_mode_files(TITLE_DIR) && write_patch(Kind::Vanilla, sel_home);
             if (ok) log_ok("Installed Vanilla: 384 machines.");
         } else {
             ok = build_and_install(m, sel_home);
         }
+    } catch (const std::bad_alloc&) {
+        printf("\n");
+        log_err("Not enough memory while %s.", stage);
+        ok = false;
     } catch (const std::exception& e) {
         printf("\n");
-        log_err("%s", e.what());
+        log_err("Failed while %s: %s", stage, e.what());
         ok = false;
     }
     aptSetHomeAllowed(true);
+    log_detail("Took %lu s", (unsigned long)((osGetTime() - started) / 1000));
     if (ok) {
         if (other) log_warn("Replaced the previous Badge Arcade patch.");
         enable_game_patching();
         if (!restart_pending) log_ok("Start Badge Arcade!");
     } else {
-        log_warn("Nothing was changed if the error came before the swap.");
+        if (swapped) log_warn("The previous mode may be incomplete now. Install Vanilla (instant) or try again.");
+        else log_info("Your current installation is unchanged.");
+        log_info("Details: /3ds/pretendo-bridge/log.txt");
     }
     probe_installed();
     draw_top();
@@ -660,9 +725,23 @@ int main() {
     amInit();
     psInit();
     osSetSpeedupEnable(true);
+    nba::mkdirs(APP_DIR);
+    struct stat log_stat{};
+    bool log_big = stat(LOG_PATH, &log_stat) == 0 && log_stat.st_size > 256 * 1024;
+    log_file = fopen(LOG_PATH, log_big ? "w" : "a");
     mount_extdata();
 
     probe();
+    {
+        bool is_new = false;
+        APT_CheckNew3DS(&is_new);
+        log_detail("=== Pretendo Bridge Installer %s on %s 3DS, Luma %u.%u.%u", APP_VERSION, is_new ? "New" : "Old",
+                   st.luma.major, st.luma.minor, st.luma.build);
+        log_detail("Game: base %d, update %d v%u; extdata %d, console week %s, console catalog %d, SD catalog %s",
+                   st.base_installed, st.update_installed, st.update_version, extdata_mounted,
+                   st.console_week.empty() ? "-" : st.console_week.c_str(), st.console_allbadge,
+                   st.sd_allbadge.empty() ? "-" : st.sd_allbadge.c_str());
+    }
     redraw();
 
     bool restarting = false;
@@ -708,6 +787,7 @@ int main() {
     }
 
     if (extdata_mounted) archiveUnmount("nbaext");
+    if (log_file) fclose(log_file);
     psExit();
     amExit();
     gfxExit();

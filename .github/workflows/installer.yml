@@ -89,3 +89,17 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Pretendo Bridge Installer $TAG" \
             --notes "Install with FBI: Remote Install > Scan QR Code with fbi-qr.png from the README. Contains the bridge patch for Nintendo Badge Arcade EUR 1.3.1 (badge-arcade-offline v0.5.4 + one hook)."
+
+      - name: Update the rolling beta release
+        if: needs.build.outputs.prerelease == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # fbi-qr-beta.png points to releases/download/beta/..., so every
+          # pre-release also replaces the files of the "beta" release.
+          if ! gh release view beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create beta --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Pretendo Bridge Installer beta (newest test build)" \
+              --notes "Always the newest pre-release. Install with FBI: scan fbi-qr-beta.png."
+          fi
+          gh release upload beta dist/* --clobber --repo "$GITHUB_REPOSITORY"

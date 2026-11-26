@@ -2,7 +2,7 @@
 # Pretendo Bridge Installer - based on devkitPro's 3DS application template.
 #
 # Needs devkitARM + libctru, and makerom + bannertool on the PATH for `make cia`.
-# The two patches are embedded from data/home_menu.ips and data/game_only.ips;
+# The six mode patches are embedded from data/*.ips;
 # .github/scripts/build_installer.sh copies them there from ../ips/.
 #---------------------------------------------------------------------------------
 .SUFFIXES:
@@ -16,9 +16,9 @@ include $(DEVKITARM)/3ds_rules
 
 TARGET		:=	pretendo-bridge-installer
 BUILD		:=	build
-SOURCES		:=	source
+SOURCES		:=	source source/builder source/builder/vendor
 DATA		:=	data
-INCLUDES	:=	source
+INCLUDES	:=	source source/builder source/builder/vendor
 
 APP_TITLE	:=	Pretendo Bridge Installer
 APP_DESCRIPTION	:=	Badge Arcade Pretendo Bridge installer
@@ -27,9 +27,12 @@ APP_PRODUCT_CODE	:=	CTR-H-PBRG
 APP_UNIQUE_ID	:=	0xBA9B1
 
 VERSION_MAJOR	:=	1
-VERSION_MINOR	:=	0
+VERSION_MINOR	:=	1
 VERSION_MICRO	:=	0
-VERSION		:=	$(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)
+# Non-empty VERSION_TAG publishes a pre-release (v<version>-<tag>); the FBI QR
+# code keeps pointing to the latest full release.
+VERSION_TAG	:=	beta1
+VERSION		:=	$(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)$(if $(VERSION_TAG),-$(VERSION_TAG),)
 
 META		:=	meta
 ICON		:=	meta/icon.png
@@ -39,13 +42,14 @@ ICON		:=	meta/icon.png
 #---------------------------------------------------------------------------------
 ARCH	:=	-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft
 
-CFLAGS	:=	-std=gnu99 -g -Wall -Wextra -O2 -mword-relocations \
+CFLAGS	:=	-g -Wall -Wextra -O2 -mword-relocations \
 			-ffunction-sections \
 			$(ARCH)
 
 CFLAGS	+=	$(INCLUDE) -D__3DS__ -DAPP_VERSION=\"$(VERSION)\"
 
-CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++11
+CXXFLAGS	:= $(CFLAGS) -std=gnu++17 -fexceptions
+CFLAGS	+=	-std=gnu99
 
 ASFLAGS	:=	-g $(ARCH)
 LDFLAGS	=	-specs=3dsx.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
@@ -67,11 +71,12 @@ export VPATH	:=	$(foreach dir,$(SOURCES),$(CURDIR)/$(dir)) \
 export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
 CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
+CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.ips)))
 
-export LD	:=	$(CC)
+export LD	:=	$(CXX)
 
-export OFILES_SOURCES	:=	$(CFILES:.c=.o)
+export OFILES_SOURCES	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o)
 export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
 export OFILES		:=	$(OFILES_BIN) $(OFILES_SOURCES)
 export HFILES		:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
@@ -93,9 +98,9 @@ all: check-data $(BUILD)
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 check-data:
-	@[ -f $(DATA)/home_menu.ips ] && [ -f $(DATA)/game_only.ips ] || { \
-		echo "Missing $(DATA)/home_menu.ips or $(DATA)/game_only.ips (copy them from ../ips/)"; \
-		exit 1; }
+	@for f in vanilla_home vanilla_game expanded_home expanded_game weekly_home weekly_game; do \
+		[ -f $(DATA)/$$f.ips ] || { echo "Missing $(DATA)/$$f.ips (see .github/scripts/build_installer.sh)"; exit 1; }; \
+	done
 
 $(BUILD):
 	@mkdir -p $@

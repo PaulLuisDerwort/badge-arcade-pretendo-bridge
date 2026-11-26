@@ -15,11 +15,30 @@ permissions:
   contents: write
 
 jobs:
+  checks:
+    # The IPS in ips/ must match badge-arcade-offline + bridge.patch, and the
+    # builder/SpotPass code must pass upstream's tests plus our own.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Patches match the source
+        run: bash .github/scripts/build_mode_ips.sh
+
+      - name: Builder and SpotPass tests
+        run: bash .github/scripts/test_builder.sh
+
   build:
+    needs: checks
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm
     outputs:
       version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
 
@@ -27,8 +46,12 @@ jobs:
         id: version
         run: |
           v=$(awk -F':=' '/^VERSION_(MAJOR|MINOR|MICRO)/ {gsub(/[ \t]/, "", $2); printf "%s.", $2}' installer/Makefile)
-          echo "version=${v%.}" >> "$GITHUB_OUTPUT"
-          echo "App version ${v%.}"
+          v=${v%.}
+          tag=$(awk -F':=' '/^VERSION_TAG/ {gsub(/[ \t]/, "", $2); print $2}' installer/Makefile)
+          [ -n "$tag" ] && v="$v-$tag"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([ -n "$tag" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "App version $v"
 
       - name: Build the installer
         run: bash .github/scripts/build_installer.sh
@@ -53,12 +76,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists, nothing to publish."
             exit 0
           fi
-          gh release create "$TAG" dist/* \
+          flags=()
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* "${flags[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Pretendo Bridge Installer $TAG" \

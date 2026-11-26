@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the installer app (.cia and .3dsx) with both bridge patches embedded.
+# Builds the installer app (.cia and .3dsx) with all six mode patches embedded.
 #
 # Meant for the devkitpro/devkitarm image, which has devkitARM and libctru but
 # not the CIA tools: makerom and bannertool are downloaded (pinned versions,
@@ -35,8 +35,12 @@ export PATH="$tools:$PATH"
 # The patches the app writes to the SD card, checked against SHA256SUMS.
 sha256sum -c SHA256SUMS
 mkdir -p installer/data
-cp ips/home-menu/code.ips installer/data/home_menu.ips
-cp ips/game-only/code.ips installer/data/game_only.ips
+cp ips/home-menu/code.ips installer/data/vanilla_home.ips
+cp ips/game-only/code.ips installer/data/vanilla_game.ips
+cp ips/expanded/home-menu.ips installer/data/expanded_home.ips
+cp ips/expanded/game-only.ips installer/data/expanded_game.ips
+cp ips/weekly/home-menu.ips installer/data/weekly_home.ips
+cp ips/weekly/game-only.ips installer/data/weekly_game.ips
 
 make -C installer cia   # builds the .3dsx first, then packs the .cia
 mkdir -p dist

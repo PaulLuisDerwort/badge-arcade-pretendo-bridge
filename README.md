@@ -2,13 +2,14 @@
 
 Play Nintendo Badge Arcade (EUR, update 1.3.1) offline with the original crane games, even while your 3DS runs in **Pretendo mode** through Nimbus.
 
-This is based on [badge-arcade-offline v0.5.4](https://github.com/GrouchoGlasses42/badge-arcade-offline) by GrouchoGlasses42 (MIT). That patch starts the game without servers and without the NNID check. The bridge adds **a single hook** (see `bridge.patch`):
+This is based on [badge-arcade-offline v0.5.4](https://github.com/GrouchoGlasses42/badge-arcade-offline) by GrouchoGlasses42 (MIT). That patch starts the game without servers and without the NNID check. The bridge adds two things (see `bridge.patch`):
 
-| Address (1.3.1) | Original | Bridge |
+| Change | Address (1.3.1) | What it does |
 |---|---|---|
-| `0x2CD6CC` (1.3.0: `0x2CD3A0`) | Checks that the account ID stored in the save matches the active account | Accepts the save under any account (NNID or PNID) |
+| Account check | `0x2CD6CC` (1.3.0: `0x2CD3A0`) | The save loads under any account (NNID or PNID); the next save stores the active account's ID as usual. |
+| B at the crane | 5 records (`src/bridge_crane.py`) | With paid plays left, the Back button stays available and **B** works. The remaining plays are dropped and the session ends the way the game ends it after the last play; press **B** again to leave the machine. |
 
-The next time the game saves, it writes the active account's ID as usual. Every other byte of the IPS is identical to the official v0.5.4 release; the unmodified build was reproduced byte for byte to confirm this.
+Everything else is identical to the official v0.5.4 release, whose build was reproduced byte for byte. The crane addresses were matched function by function in both executables, and the change is tested in badge-arcade-offline's emulator harness against the real 1.3.0 and 1.3.1 code (`tests/test_bridge_crane.py`; the whole upstream suite passes with the bridge).
 
 ## Install directly on the 3DS
 
@@ -63,7 +64,8 @@ Copy `ips/<variant>/code.ips` to `SD:/luma/titles/0004000000153600/code.ips`.
 ## Limitations
 
 - **EUR, update 1.3.1 only.** USA and JPN are not supported.
-- The extra hook has been confirmed working on one console so far. The original project's test suite runs without the game code (61 passed, 442 skipped).
+- The account bridge has been confirmed working on one console so far. B at the crane is tested in the emulator against the real game code, not yet on a console.
+- With the game's code (`BADGE_INPUT_DIR`), badge-arcade-offline's full suite passes with the bridge (490 tests); without it, CI runs the parts that need no game data.
 - An existing Reclawed patch gets replaced. This patch does not read badges that Reclawed stored only inside the game.
 - To uninstall: **X** in the installer app, *Uninstall* in the store, or delete `code.ips`.
 

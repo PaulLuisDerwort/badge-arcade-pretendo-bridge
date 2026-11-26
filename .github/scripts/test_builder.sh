@@ -37,4 +37,4 @@ python3 -m pip install -q -r "$work/requirements-dev.txt" pycryptodome
 cd "$work"
 SPOTPASS_HOST="$host" PYTHONPATH=src:tests python3 -m pytest -q --tb=short \
   tests/test_weekly_builder.py tests/test_badge_spotpass.py tests/test_badge_catalog.py \
-  tests/test_expanded.py tests/test_spotpass.py
+  tests/test_expanded.py tests/test_spotpass.py tests/test_bridge_crane.py tests/test_badge_patch.py

@@ -1,6 +1,86 @@
---- a/src/badge_patch.py	2026-11-26 00:23:43.538215383 +0100
-+++ b/src/badge_patch.py	2026-11-26 00:29:12.870328116 +0100
-@@ -64,6 +64,11 @@
+diff --git a/patches/bridge_crane.s b/patches/bridge_crane.s
+new file mode 100644
+index 0000000..d097186
+--- /dev/null
++++ b/patches/bridge_crane.s
+@@ -0,0 +1,64 @@
++/* Pretendo Bridge: leave a crane machine with B (or the Back button) while
++ * paid plays remain. The remaining plays are dropped: the session ends the
++ * same way the game ends it after its last play.
++ *
++ * Addresses are 1.3.0 values; src/badge_patch.py maps them for 1.3.1, like
++ * patches/badge_offline.s. The code lives in the dead body of the SDK's
++ * SOC GetHostByName (its entry already branches to badge_soc_unavailable).
++ *
++ * Crane bottom screen (CraneGameScreenD): state at +0x208, result at +0x204,
++ * remaining plays at +0x218. State 9 = paid, waiting for the next play.
++ * Crane task: screen at +0x234, play session at +0x188.
++ */
++    .syntax unified
++    .arm
++    .text
++
++    /* Game functions, resolved by src/bridge_crane.py (1.3.0 / 1.3.1):
++     * SET_STATE (state*, new), PLAY_DONE (screen: one play over; r2 != 0 ends
++     * the session), SESSION_REMAINING (session, remaining), GLOBAL_REMAINING
++     * (*0x42b28c, remaining), SESSION_END (task: bookkeeping, save, next task
++     * state), SCREEN_EVENT_EXIT (exit of the button-release handler). */
++
++/* Replaces "blx r1" (screen->GetResult) at the top of the crane task update.
++ * r0 = screen, r1 = GetResult, r4 = task (the caller's, preserved here). */
++.global bridge_crane_result
++bridge_crane_result:
++    push {r4, r5, r6, lr}
++    blx r1
++    cmp r0, #2                    /* Back */
++    bne .Lresult_done
++    ldr r5, [r4, #0x234]
++    ldr r1, [r5, #0x208]
++    cmp r1, #9                    /* while paid plays remain */
++    bne .Lresult_done
++    add r0, r5, #0x208            /* PLAY_DONE only acts in state 0xa */
++    mov r1, #0xa
++    bl SET_STATE
++    mov r0, r5
++    ldr r1, [r4, #0x19c]
++    mov r2, #1                    /* end now: remaining 0, state 0xb (r3 unused then) */
++    bl PLAY_DONE
++    ldr r0, [r4, #0x188]
++    ldr r1, [r5, #0x218]
++    bl SESSION_REMAINING
++    ldr r0, .Lglobal
++    ldr r0, [r0]
++    ldr r1, [r5, #0x218]
++    bl GLOBAL_REMAINING
++    mov r0, r4
++    bl SESSION_END                /* state 0xb: the normal end of a session */
++    mov r0, #0                    /* nothing else to handle this frame */
++.Lresult_done:
++    pop {r4, r5, r6, pc}
++
++/* State 9 in the screen's button-release handler: r0 = button id, r4 = screen.
++ * Report Back (button 2, also pressed by B) like state 1 does. */
++.global bridge_crane_back
++bridge_crane_back:
++    cmp r0, #2
++    streq r0, [r4, #0x204]
++    b SCREEN_EVENT_EXIT
++
++.Lglobal:
++    .word 0x42b28c
+diff --git a/src/badge_patch.py b/src/badge_patch.py
+index d75b3fd..f8fc0a8 100644
+--- a/src/badge_patch.py
++++ b/src/badge_patch.py
+@@ -12,6 +12,7 @@ import tempfile
+ 
+ from patch_format import ROOT, arm_branch, encode_ips, read_arm_object, write_zip
+ from badge_versions import BASE, REVISIONS, UPDATE, Revision
++from bridge_crane import crane_records
+ 
+ TITLE_ID = "0004000000153600"
+ CODE_SIZE = 0x356000
+@@ -64,6 +65,11 @@ HOOKS = {
      0x28FBAC: "badge_persistent_id",
      0x2BBE04: "badge_home_unavailable",
      0x2BCBD0: "badge_return_zero",
@@ -12,3 +92,303 @@
      0x2E8C44: "badge_home_result",
      0x2EFDD8: "badge_return",
      0x2F1B34: "badge_home_categories",
+@@ -123,6 +129,8 @@ def build_records(revision: Revision = BASE, *, home_menu: bool = False) -> tupl
+     records = [(payload_address - LOAD_ADDRESS, payload)]
+     records.extend((revision.address(a) - LOAD_ADDRESS, arm_branch(revision.address(a), symbols[n]))
+                    for a, n in selected_hooks(home_menu).items())
++    # Pretendo Bridge: B leaves a crane machine while paid plays remain.
++    records.extend(crane_records(revision))
+     # The default catcher vector is independently capped at 30. Reserve enough
+     # pointer slots for the merged catalog's original and bonus catchers.
+     records.append((revision.address(0x247E24) - LOAD_ADDRESS, bytes.fromhex("021ca0e3")))
+diff --git a/src/badge_versions.py b/src/badge_versions.py
+index 9fcf3bf..1bab114 100644
+--- a/src/badge_versions.py
++++ b/src/badge_versions.py
+@@ -58,6 +58,11 @@ UPDATE = Revision(
+         0x2B9D68: 0x2BA810,
+         0x2BA5F4: 0x2BB09C,
+         0x2BBE04: 0x2212DC, 0x2BCBD0: 0x2BCF00,
++        # Pretendo Bridge: B at the crane (src/bridge_crane.py), matched against both executables.
++        0x241394: 0x241CE0, 0x2413B0: 0x241CFC, 0x252AA8: 0x2534A0, 0x2554A4: 0x255ED8,
++        0x25CA78: 0x25D484, 0x2DFBFC: 0x2E0058, 0x2E312C: 0x2E3584, 0x2F9534: 0x2F9BD4,
++        0x2F98CC: 0x2F9F6C, 0x2F9934: 0x2F9FD4, 0x42B28C: 0x42C28C,
++        0x2411BC: 0x241B08, 0x2F9848: 0x2F9EE8,  # tests: button setup, release handler
+         0x2CD3A0: 0x2CD6CC, 0x2CD5DC: 0x2CD908,
+         0x2E8C44: 0x2E90A8,
+         0x2EA4A4: 0x2EA8F4, 0x2EACC0: 0x2EB1D8, 0x2EC654: 0x2ECD24,
+diff --git a/src/bridge_crane.py b/src/bridge_crane.py
+new file mode 100644
+index 0000000..1908605
+--- /dev/null
++++ b/src/bridge_crane.py
+@@ -0,0 +1,124 @@
++"""Pretendo Bridge: leave a crane machine with B while paid plays remain.
++
++The original game hides the bottom screen's Back button once plays are paid
++for and ignores it until the last play is over. These records keep Back
++active in that state and let the crane task end the session the same way it
++does after the last play, with the remaining plays dropped (see
++patches/bridge_crane.s). The addresses below are 1.3.0 values; the 1.3.1
++counterparts are in badge_versions.UPDATE.addresses, matched function by
++function against both executables.
++"""
++from __future__ import annotations
++
++from pathlib import Path
++import re
++import struct
++import subprocess
++import tempfile
++
++from badge_versions import Revision
++from patch_format import arm_branch
++
++ROOT = Path(__file__).resolve().parents[1]
++LOAD_ADDRESS = 0x100000
++
++# Dead body of the SDK's SOC GetHostByName: its entry branches to
++# badge_soc_unavailable, nothing else branches into it, and it is identical
++# in both revisions.
++CAVE = 0x1A5758
++CAVE_END = 0x1A57D0
++
++# Game functions the cave calls (1.3.0 addresses).
++EXTERNALS = {
++    "SET_STATE": 0x25CA78,
++    "PLAY_DONE": 0x2F9534,
++    "SESSION_REMAINING": 0x2554A4,
++    "GLOBAL_REMAINING": 0x252AA8,
++    "SESSION_END": 0x2E312C,
++    "SCREEN_EVENT_EXIT": 0x2F9934,
++}
++
++TASK_RESULT_CALL = 0x2DFBFC  # crane task update: "blx r1" (screen GetResult)
++STATE9_EXIT = 0x2F98CC       # screen button-release handler, state 9: "b exit"
++BACK_SHOWN = 0x241394        # state 9 button setup: Back SetVisible(0) -> 1
++BACK_ENABLED = 0x2413B0      # state 9 button setup: Back SetDisabled(1) -> 0
++
++R_ARM_CALL = 28
++R_ARM_JUMP24 = 29
++
++
++def _link(obj: bytes, load_address: int, externals: dict[str, int]) -> tuple[bytes, dict[str, int]]:
++    """.text of a clang ARM object with branches to `externals` resolved."""
++    shoff = struct.unpack_from("<I", obj, 32)[0]
++    shsize, shcount, shnames = struct.unpack_from("<HHH", obj, 46)
++    sections = [struct.unpack_from("<10I", obj, shoff + i * shsize) for i in range(shcount)]
++
++    def content(section):
++        return obj[section[4]:section[4] + section[5]]
++
++    def cstr(table, offset):
++        return table[offset:table.index(0, offset)].decode("ascii")
++
++    names = content(sections[shnames])
++    text_index = next(i for i, s in enumerate(sections) if cstr(names, s[0]) == ".text")
++    text = bytearray(content(sections[text_index]))
++    symbols = {}
++    for section in sections:
++        if section[1] != 2:  # SHT_SYMTAB
++            continue
++        table = content(sections[section[6]])
++        for offset in range(section[4], section[4] + section[5], section[9]):
++            n, value, _, _, _, index = struct.unpack_from("<IIIBBH", obj, offset)
++            if index == text_index and n:
++                symbols[cstr(table, n)] = load_address + value
++    for section in sections:
++        if section[1] not in (4, 9) or section[7] != text_index or not section[5]:
++            continue
++        if section[1] != 9:
++            raise ValueError("Unsupported ELF relocation section")
++        symtab = sections[section[6]]
++        strtab = content(sections[symtab[6]])
++        for offset in range(section[4], section[4] + section[5], 8):
++            position, info = struct.unpack_from("<II", obj, offset)
++            n, _, _, _, _, index = struct.unpack_from("<IIIBBH", obj, symtab[4] + (info >> 8) * symtab[9])
++            name = cstr(strtab, n)
++            kind = info & 0xFF
++            if kind not in (R_ARM_CALL, R_ARM_JUMP24) or index != 0 or name not in externals:
++                raise ValueError(f"Unsupported relocation {kind} against {name!r}")
++            old = struct.unpack_from("<I", text, position)[0]
++            if old & 0x00FFFFFF != 0x00FFFFFE:
++                raise ValueError("Unexpected ARM branch addend")
++            branch = struct.unpack("<I", arm_branch(load_address + position, externals[name]))[0]
++            # Keep the condition and the link bit of the assembled instruction.
++            struct.pack_into("<I", text, position, (old & 0xFF000000) | (branch & 0x00FFFFFF))
++    return bytes(text), symbols
++
++
++def crane_payload(revision: Revision) -> tuple[bytes, dict[str, int]]:
++    with tempfile.TemporaryDirectory(prefix="bridge-crane-") as temp:
++        source = (ROOT / "patches/bridge_crane.s").read_text()
++        source = re.sub(r"0x[0-9a-fA-F]+", lambda m: hex(revision.address(int(m[0], 16))), source)
++        assembly = Path(temp) / "crane.s"
++        assembly.write_text(source)
++        obj = Path(temp) / "crane.o"
++        subprocess.run(["clang", "-target", "arm-none-eabi", "-march=armv6k", "-c", str(assembly), "-o", str(obj)],
++                       check=True)
++        externals = {name: revision.address(address) for name, address in EXTERNALS.items()}
++        payload, symbols = _link(obj.read_bytes(), revision.address(CAVE), externals)
++    if len(payload) > revision.address(CAVE_END) - revision.address(CAVE):
++        raise ValueError("Crane payload exceeds its code cave")
++    return payload, symbols
++
++
++def crane_records(revision: Revision) -> list[tuple[int, bytes]]:
++    payload, symbols = crane_payload(revision)
++    call = revision.address(TASK_RESULT_CALL)
++    exit_branch = revision.address(STATE9_EXIT)
++    bl = struct.unpack("<I", arm_branch(call, symbols["bridge_crane_result"]))[0] | 0x01000000
++    return [
++        (revision.address(CAVE) - LOAD_ADDRESS, payload),
++        (call - LOAD_ADDRESS, struct.pack("<I", bl)),
++        (exit_branch - LOAD_ADDRESS, arm_branch(exit_branch, symbols["bridge_crane_back"])),
++        (revision.address(BACK_SHOWN) - LOAD_ADDRESS, bytes.fromhex("0110a0e3")),    # mov r1, #1
++        (revision.address(BACK_ENABLED) - LOAD_ADDRESS, bytes.fromhex("0010a0e3")),  # mov r1, #0
++    ]
+diff --git a/tests/test_badge_patch.py b/tests/test_badge_patch.py
+index f27448f..9ca2608 100644
+--- a/tests/test_badge_patch.py
++++ b/tests/test_badge_patch.py
+@@ -278,7 +278,8 @@ def test_badge_ips_records_are_bounded_and_nonoverlapping(badge_records, badge_r
+     records, symbols = badge_records
+     ips = encode_ips(records, badge.CODE_SIZE)
+     assert ips.startswith(b"PATCH") and ips.endswith(b"EOF")
+-    assert len(records) == len(badge.selected_hooks(home_menu)) + 3 + (0 if home_menu else 3) + (badge_revision.version == "1.3.1")
++    # Pretendo Bridge: + 5 records for B at the crane (src/bridge_crane.py).
++    assert len(records) == len(badge.selected_hooks(home_menu)) + 3 + (0 if home_menu else 3) + (badge_revision.version == "1.3.1") + 5
+     assert symbols["badge_title_start"] == badge_revision.address(badge.PAYLOAD_ADDRESS)
+     assert max(a + len(b) for a, b in records) <= badge.CODE_SIZE
+     payload = next(b for a, b in records
+@@ -695,8 +696,9 @@ def test_offline_identity_preserves_existing_account_and_enables_unlinked_save(
+     assert m.word(SAVE + 0xE560 + 0x30) == 37
+     # The original load-side account check accepts the same saved identity.
+     assert m.run(0x2CD3A0, SAVE) == 1
++    # Pretendo Bridge: it also accepts another account's save (NNID <-> PNID).
+     m.put(SAVE + 0xE55C, expected + 1)
+-    assert m.run(0x2CD3A0, SAVE) == 0
++    assert m.run(0x2CD3A0, SAVE) == 1
+ 
+ 
+ @pytest.mark.parametrize("stage,corrupt_primary", [(1, False), (2, False), (1, True)])
+diff --git a/tests/test_bridge_crane.py b/tests/test_bridge_crane.py
+new file mode 100644
+index 0000000..3ce4b8d
+--- /dev/null
++++ b/tests/test_bridge_crane.py
+@@ -0,0 +1,114 @@
++"""Pretendo Bridge: B at the crane while paid plays remain (src/bridge_crane.py).
++
++Runs the patched executables in the same emulator as test_badge_patch.py.
++"""
++import struct
++
++import pytest
++from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R4, UC_ARM_REG_SP
++
++from bridge_crane import BACK_ENABLED, BACK_SHOWN, CAVE
++from test_badge_patch import (  # noqa: F401 (pytest fixtures)
++    PRESERVED, STACK, STOP, BadgeMachine, badge_code, badge_records, badge_revision, home_menu,
++    home_variant_requirement,
++)
++
++SCREEN = 0x780000
++EVENT = 0x790000
++TASK = 0x7A0000
++SESSION = 0x7B0000
++GLOBAL = 0x7C0000
++GETTER = 0x7D0000
++
++RELEASE_HANDLER = 0x2F9848  # CraneGameScreenD button-release handler
++PANE_UPDATE = 0x2411BC      # its tail call
++PLAY_DONE, SESSION_REMAINING, GLOBAL_REMAINING, SESSION_END = 0x2F9534, 0x2554A4, 0x252AA8, 0x2E312C
++
++
++def release(m, state, button):
++    m.put(SCREEN + 0x204, 0)
++    m.put(SCREEN + 0x208, state)
++    m.uc.mem_write(EVENT + 0x16, b"\x10")
++    m.put(EVENT + 0x20, button)
++    m.boundaries[PANE_UPDATE] = lambda: None
++    m.run(RELEASE_HANDLER, SCREEN, EVENT)
++    return m.word(SCREEN + 0x204), m.word(SCREEN + 0x208)
++
++
++def test_back_is_reported_while_plays_remain(badge_code):
++    assert release(BadgeMachine(badge_code), 9, 2) == (2, 9)
++
++
++@pytest.mark.parametrize("state,button,expected", [
++    (1, 2, (2, 2)),    # Back without a session, as before
++    (9, 6, (6, 0xF)),  # the rabbit still works with plays left
++    (9, 4, (0, 9)),    # L/R are not this handler's business
++])
++def test_other_buttons_behave_as_before(badge_code, state, button, expected):
++    assert release(BadgeMachine(badge_code), state, button) == expected
++
++
++def test_crane_records_do_not_overlap_other_records(badge_records):
++    spans = sorted((a, a + len(b)) for a, b in badge_records[0])
++    assert all(end <= start for (_, end), (start, _) in zip(spans, spans[1:]))
++
++
++def test_state9_keeps_back_visible_and_enabled(badge_code):
++    revision = badge_code.revision
++    word = lambda a: struct.unpack_from("<I", badge_code, revision.address(a) - 0x100000)[0]
++    assert word(BACK_SHOWN) == 0xE3A01001    # SetVisible(1)
++    assert word(BACK_ENABLED) == 0xE3A01000  # SetDisabled(0)
++
++
++def run_result(m, result, state, remaining=3):
++    """Run the hooked GetResult call with the crane task in r4."""
++    m.uc.mem_write(GETTER, bytes.fromhex("040290e5 1eff2fe1"))  # ldr r0, [r0, #0x204]; bx lr
++    m.put(TASK + 0x234, SCREEN)
++    m.put(TASK + 0x19C, 0)
++    m.put(TASK + 0x188, SESSION)
++    m.put(0x42B28C, GLOBAL)
++    m.put(SCREEN + 0x204, result)
++    m.put(SCREEN + 0x208, state)
++    m.put(SCREEN + 0x218, remaining)
++    seen = []
++
++    def play_done():
++        seen.append(("play_done", m.reg(0), m.reg(2), m.word(SCREEN + 0x208)))
++        m.put(SCREEN + 0x218, 0)
++        m.put(SCREEN + 0x208, 0xB)
++
++    m.boundaries.update({
++        PLAY_DONE: play_done,
++        SESSION_REMAINING: lambda: seen.append(("session_remaining", m.reg(0), m.reg(1))),
++        GLOBAL_REMAINING: lambda: seen.append(("global_remaining", m.reg(0), m.reg(1))),
++        SESSION_END: lambda: seen.append(("session_end", m.reg(0), m.word(SCREEN + 0x208))),
++    })
++    m.uc.reg_write(UC_ARM_REG_SP, STACK)
++    m.uc.reg_write(UC_ARM_REG_LR, STOP)
++    for i, register in enumerate(PRESERVED):
++        m.uc.reg_write(register, 0xABC000 + i)
++    m.uc.reg_write(UC_ARM_REG_R0, SCREEN)
++    m.uc.reg_write(UC_ARM_REG_R1, GETTER)
++    m.uc.reg_write(UC_ARM_REG_R4, TASK)
++    m.uc.emu_start(m.native(CAVE), STOP + 4, count=200000)
++    assert m.uc.reg_read(UC_ARM_REG_PC) == STOP
++    assert m.uc.reg_read(UC_ARM_REG_SP) == STACK
++    assert m.uc.reg_read(UC_ARM_REG_R4) == TASK
++    return m.reg(0), seen
++
++
++def test_back_with_plays_left_ends_the_session(badge_code):
++    result, seen = run_result(BadgeMachine(badge_code), 2, 9)
++    assert result == 0  # handled: no Back this frame
++    assert seen == [
++        ("play_done", SCREEN, 1, 0xA),        # ends now, from the state it expects
++        ("session_remaining", SESSION, 0),
++        ("global_remaining", GLOBAL, 0),
++        ("session_end", TASK, 0xB),           # the game's own end of a session
++    ]
++
++
++@pytest.mark.parametrize("result,state", [(2, 1), (2, 0xA), (3, 9), (0, 9), (1, 9)])
++def test_other_results_pass_through(badge_code, result, state):
++    got, seen = run_result(BadgeMachine(badge_code), result, state)
++    assert got == result and seen == []

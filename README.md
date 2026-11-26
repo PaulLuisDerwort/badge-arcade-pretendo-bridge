@@ -64,7 +64,7 @@ Requires Python 3.11+ and clang with ARM support.
 
 ### The installer app
 
-The app lives in `installer/` (C, libctru, console UI). GitHub Actions builds it in the `devkitpro/devkitarm` image on every push (`.github/workflows/installer.yml`); pushing a tag `v*` publishes the `.cia` and `.3dsx` as a release. To build locally with devkitARM, makerom and bannertool on the PATH:
+The app lives in `installer/` (C, libctru, console UI). GitHub Actions builds it in the `devkitpro/devkitarm` image on every push (`.github/workflows/installer.yml`). When the version in `installer/Makefile` has no release yet, the workflow publishes one (tag `v<version>`) with the `.cia` and `.3dsx`. To build locally with devkitARM, makerom and bannertool on the PATH:
 
 ```sh
 bash .github/scripts/build_installer.sh   # -> dist/pretendo-bridge-installer.{cia,3dsx}

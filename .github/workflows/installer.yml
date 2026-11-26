@@ -1,13 +1,14 @@
 name: Installer
 
-# Builds the installer app on every push to main. Pushing a tag v* also
-# publishes a GitHub Release with the .cia, so the FBI QR code
+# Builds the installer app on every push to main. When the version in
+# installer/Makefile has no release yet, the release job publishes one
+# (tag v<version>) with the .cia and .3dsx, so the FBI QR code
 # (releases/latest/download/pretendo-bridge-installer.cia) points to it.
+# To ship a new version: bump VERSION_* in installer/Makefile and push.
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -17,8 +18,17 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: devkitpro/devkitarm
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read the app version
+        id: version
+        run: |
+          v=$(awk -F':=' '/^VERSION_(MAJOR|MINOR|MICRO)/ {gsub(/[ \t]/, "", $2); printf "%s.", $2}' installer/Makefile)
+          echo "version=${v%.}" >> "$GITHUB_OUTPUT"
+          echo "App version ${v%.}"
 
       - name: Build the installer
         run: bash .github/scripts/build_installer.sh
@@ -30,7 +40,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -39,11 +49,17 @@ jobs:
           name: pretendo-bridge-installer
           path: dist
 
-      - name: Publish the release
+      - name: Publish the release (only for a new version)
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.build.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to publish."
+            exit 0
+          fi
+          gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Pretendo Bridge Installer $GITHUB_REF_NAME" \
-            --notes "Install with FBI: Remote Install > Scan QR Code (see README). Contains the bridge patch for Nintendo Badge Arcade EUR 1.3.1."
+            --target "$GITHUB_SHA" \
+            --title "Pretendo Bridge Installer $TAG" \
+            --notes "Install with FBI: Remote Install > Scan QR Code with fbi-qr.png from the README. Contains the bridge patch for Nintendo Badge Arcade EUR 1.3.1 (badge-arcade-offline v0.5.4 + one hook)."

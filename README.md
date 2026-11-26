@@ -23,6 +23,21 @@ The next time the game saves, it writes the active account's ID as usual. Every 
 
 **X** in the app removes the bridge again. The app has no network access; both patch variants are built into it.
 
+### Beta: switch catalog modes on the console (v1.1.0-beta1)
+
+Scan `fbi-qr-beta.png` in FBI instead to try the next version. In the app, pick the **Mode** with LEFT/RIGHT (L/R jumps 10 weeks), the **Badges** variant on the second row, and press **A**:
+
+| Mode | Machines | What the app needs |
+|---|---|---|
+| Vanilla | 384 from the installed update | nothing, installs instantly |
+| Expanded | 398 + 8 bonus layouts | your installed game (read directly from the console) |
+| Week | every machine of one archived SpotPass week | your installed game, the week's pack and the badge catalog |
+
+The app builds Expanded and weeks on the console from your own game (badge-arcade-offline's native builder, ported to the 3DS) and swaps them into `luma/titles/0004000000153600/`. Building takes a few minutes; switching back to Vanilla is instant.
+
+- **Weeks and badge catalog:** put SpotPass packs (`data_v131-…-EU.enc`, `.boss`, or decrypted `.sarc`) and the full catalog `allbadge_v131…` in `SD:/3ds/pretendo-bridge/spotpass/`, then press **Y** to rescan. Encrypted packs are decrypted on the console with its own SpotPass key; no boot9 dump is needed. If your console still has SpotPass data from back then, its last week and catalog show up without any files. This project does not include or download any SpotPass data.
+- **If the app can't read the game's files** (it uses the installed titles' RomFS), export `base-pc.sarc`, `pc.sarc` and `Schedule.xml` as in badge-arcade-offline's README (step 3) to `SD:/3ds/pretendo-bridge/input/`.
+
 ### Option 2: Universal-Updater
 
 1. **Universal-Updater** → Settings → *Select UniStore* → **+** → **Scan QR code** → scan `unistore-qr.png`.

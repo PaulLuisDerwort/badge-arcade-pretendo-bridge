@@ -1,20 +1,31 @@
 diff --git a/patches/bridge_crane.s b/patches/bridge_crane.s
 new file mode 100644
-index 0000000..d097186
+index 0000000..69a086c
 --- /dev/null
 +++ b/patches/bridge_crane.s
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,73 @@
 +/* Pretendo Bridge: leave a crane machine with B (or the Back button) while
-+ * paid plays remain. The remaining plays are dropped: the session ends the
-+ * same way the game ends it after its last play.
++ * paid plays remain. The remaining plays are dropped and the session ends the
++ * way the game ends it after its last play; then the machine is left exactly
++ * like with Back when no plays are left, back to the arcade.
 + *
 + * Addresses are 1.3.0 values; src/badge_patch.py maps them for 1.3.1, like
 + * patches/badge_offline.s. The code lives in the dead body of the SDK's
 + * SOC GetHostByName (its entry already branches to badge_soc_unavailable).
 + *
 + * Crane bottom screen (CraneGameScreenD): state at +0x208, result at +0x204,
-+ * remaining plays at +0x218. State 9 = paid, waiting for the next play.
++ * remaining plays at +0x218. State 1 = no plays, 2 = leaving, 9 = paid and
++ * waiting for the next play, 0xa = playing, 0xb = plays used up.
 + * Crane task: screen at +0x234, play session at +0x188.
++ *
++ * 1. Screen, button released in state 9 (bridge_crane_back): Back drops the
++ *    plays with the game's end-of-play routine (state 0xb, remaining 0) and
++ *    reports result 2 (Back) to the crane task.
++ * 2. Crane task, reading the result (bridge_crane_result): Back together with
++ *    state 0xb only comes from step 1 (the game reports Back in state 1 and
++ *    switches to state 2 at the same time). The session is ended as after
++ *    the last play, the screen switches to state 2 and the game's own Back
++ *    handling takes over.
 + */
 +    .syntax unified
 +    .arm
@@ -22,9 +33,10 @@ index 0000000..d097186
 +
 +    /* Game functions, resolved by src/bridge_crane.py (1.3.0 / 1.3.1):
 +     * SET_STATE (state*, new), PLAY_DONE (screen: one play over; r2 != 0 ends
-+     * the session), SESSION_REMAINING (session, remaining), GLOBAL_REMAINING
-+     * (*0x42b28c, remaining), SESSION_END (task: bookkeeping, save, next task
-+     * state), SCREEN_EVENT_EXIT (exit of the button-release handler). */
++     * the session: remaining 0, state 0xb), SESSION_REMAINING (session,
++     * remaining: top screen counter), SESSION_END (task: bookkeeping of a
++     * finished session, in state 0xb), SCREEN_EVENT_EXIT (exit of the
++     * button-release handler). */
 +
 +/* Replaces "blx r1" (screen->GetResult) at the top of the crane task update.
 + * r0 = screen, r1 = GetResult, r4 = task (the caller's, preserved here). */
@@ -36,38 +48,35 @@ index 0000000..d097186
 +    bne .Lresult_done
 +    ldr r5, [r4, #0x234]
 +    ldr r1, [r5, #0x208]
-+    cmp r1, #9                    /* while paid plays remain */
++    cmp r1, #0xb                  /* plays just dropped by bridge_crane_back */
 +    bne .Lresult_done
-+    add r0, r5, #0x208            /* PLAY_DONE only acts in state 0xa */
-+    mov r1, #0xa
-+    bl SET_STATE
-+    mov r0, r5
-+    ldr r1, [r4, #0x19c]
-+    mov r2, #1                    /* end now: remaining 0, state 0xb (r3 unused then) */
-+    bl PLAY_DONE
 +    ldr r0, [r4, #0x188]
-+    ldr r1, [r5, #0x218]
++    mov r1, #0
 +    bl SESSION_REMAINING
-+    ldr r0, .Lglobal
-+    ldr r0, [r0]
-+    ldr r1, [r5, #0x218]
-+    bl GLOBAL_REMAINING
 +    mov r0, r4
-+    bl SESSION_END                /* state 0xb: the normal end of a session */
-+    mov r0, #0                    /* nothing else to handle this frame */
++    bl SESSION_END                /* the normal end of a session */
++    add r0, r5, #0x208
++    mov r1, #2
++    bl SET_STATE                  /* leaving, as Back does in state 1 */
++    mov r0, #2                    /* the game's Back handling runs next */
 +.Lresult_done:
 +    pop {r4, r5, r6, pc}
 +
 +/* State 9 in the screen's button-release handler: r0 = button id, r4 = screen.
-+ * Report Back (button 2, also pressed by B) like state 1 does. */
++ * Back (button 2, also pressed by B) drops the remaining plays. */
 +.global bridge_crane_back
 +bridge_crane_back:
 +    cmp r0, #2
-+    streq r0, [r4, #0x204]
++    bne SCREEN_EVENT_EXIT
++    add r0, r4, #0x208            /* PLAY_DONE only acts in state 0xa */
++    mov r1, #0xa
++    bl SET_STATE
++    mov r0, r4
++    mov r2, #1                    /* end now (r1, r3 unused then) */
++    bl PLAY_DONE                  /* remaining 0, state 0xb */
++    mov r0, #2
++    str r0, [r4, #0x204]          /* report Back to the crane task */
 +    b SCREEN_EVENT_EXIT
-+
-+.Lglobal:
-+    .word 0x42b28c
 diff --git a/src/badge_patch.py b/src/badge_patch.py
 index d75b3fd..f8fc0a8 100644
 --- a/src/badge_patch.py
@@ -102,7 +111,7 @@ index d75b3fd..f8fc0a8 100644
      # pointer slots for the merged catalog's original and bonus catchers.
      records.append((revision.address(0x247E24) - LOAD_ADDRESS, bytes.fromhex("021ca0e3")))
 diff --git a/src/badge_versions.py b/src/badge_versions.py
-index 9fcf3bf..1bab114 100644
+index 9fcf3bf..5458ab0 100644
 --- a/src/badge_versions.py
 +++ b/src/badge_versions.py
 @@ -58,6 +58,11 @@ UPDATE = Revision(
@@ -110,28 +119,28 @@ index 9fcf3bf..1bab114 100644
          0x2BA5F4: 0x2BB09C,
          0x2BBE04: 0x2212DC, 0x2BCBD0: 0x2BCF00,
 +        # Pretendo Bridge: B at the crane (src/bridge_crane.py), matched against both executables.
-+        0x241394: 0x241CE0, 0x2413B0: 0x241CFC, 0x252AA8: 0x2534A0, 0x2554A4: 0x255ED8,
++        0x241394: 0x241CE0, 0x2413B0: 0x241CFC, 0x2554A4: 0x255ED8,
 +        0x25CA78: 0x25D484, 0x2DFBFC: 0x2E0058, 0x2E312C: 0x2E3584, 0x2F9534: 0x2F9BD4,
-+        0x2F98CC: 0x2F9F6C, 0x2F9934: 0x2F9FD4, 0x42B28C: 0x42C28C,
++        0x2F98CC: 0x2F9F6C, 0x2F9934: 0x2F9FD4,
 +        0x2411BC: 0x241B08, 0x2F9848: 0x2F9EE8,  # tests: button setup, release handler
          0x2CD3A0: 0x2CD6CC, 0x2CD5DC: 0x2CD908,
          0x2E8C44: 0x2E90A8,
          0x2EA4A4: 0x2EA8F4, 0x2EACC0: 0x2EB1D8, 0x2EC654: 0x2ECD24,
 diff --git a/src/bridge_crane.py b/src/bridge_crane.py
 new file mode 100644
-index 0000000..1908605
+index 0000000..4926e69
 --- /dev/null
 +++ b/src/bridge_crane.py
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,123 @@
 +"""Pretendo Bridge: leave a crane machine with B while paid plays remain.
 +
 +The original game hides the bottom screen's Back button once plays are paid
 +for and ignores it until the last play is over. These records keep Back
-+active in that state and let the crane task end the session the same way it
-+does after the last play, with the remaining plays dropped (see
-+patches/bridge_crane.s). The addresses below are 1.3.0 values; the 1.3.1
-+counterparts are in badge_versions.UPDATE.addresses, matched function by
-+function against both executables.
++active in that state. Back then drops the remaining plays, ends the session
++the way the game does after its last play and leaves the machine like Back
++without plays (see patches/bridge_crane.s). The addresses below are 1.3.0
++values; the 1.3.1 counterparts are in badge_versions.UPDATE.addresses,
++matched function by function against both executables.
 +"""
 +from __future__ import annotations
 +
@@ -158,7 +167,6 @@ index 0000000..1908605
 +    "SET_STATE": 0x25CA78,
 +    "PLAY_DONE": 0x2F9534,
 +    "SESSION_REMAINING": 0x2554A4,
-+    "GLOBAL_REMAINING": 0x252AA8,
 +    "SESSION_END": 0x2E312C,
 +    "SCREEN_EVENT_EXIT": 0x2F9934,
 +}
@@ -274,10 +282,10 @@ index f27448f..9ca2608 100644
  @pytest.mark.parametrize("stage,corrupt_primary", [(1, False), (2, False), (1, True)])
 diff --git a/tests/test_bridge_crane.py b/tests/test_bridge_crane.py
 new file mode 100644
-index 0000000..3ce4b8d
+index 0000000..842f37b
 --- /dev/null
 +++ b/tests/test_bridge_crane.py
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,141 @@
 +"""Pretendo Bridge: B at the crane while paid plays remain (src/bridge_crane.py).
 +
 +Runs the patched executables in the same emulator as test_badge_patch.py.
@@ -297,35 +305,58 @@ index 0000000..3ce4b8d
 +EVENT = 0x790000
 +TASK = 0x7A0000
 +SESSION = 0x7B0000
-+GLOBAL = 0x7C0000
 +GETTER = 0x7D0000
 +
 +RELEASE_HANDLER = 0x2F9848  # CraneGameScreenD button-release handler
 +PANE_UPDATE = 0x2411BC      # its tail call
-+PLAY_DONE, SESSION_REMAINING, GLOBAL_REMAINING, SESSION_END = 0x2F9534, 0x2554A4, 0x252AA8, 0x2E312C
++PLAY_DONE, SESSION_REMAINING, SESSION_END = 0x2F9534, 0x2554A4, 0x2E312C
 +
 +
-+def release(m, state, button):
++def stub_play_done(m, seen):
++    """The game's end-of-play routine with r2 != 0: remaining 0, state 0xb."""
++    def play_done():
++        seen.append(("play_done", m.reg(0), m.reg(2), m.word(SCREEN + 0x208)))
++        m.put(SCREEN + 0x218, 0)
++        m.put(SCREEN + 0x208, 0xB)
++    m.boundaries[PLAY_DONE] = play_done
++
++
++def release(m, state, button, seen=None):
++    seen = [] if seen is None else seen
 +    m.put(SCREEN + 0x204, 0)
 +    m.put(SCREEN + 0x208, state)
++    m.put(SCREEN + 0x218, 3)
 +    m.uc.mem_write(EVENT + 0x16, b"\x10")
 +    m.put(EVENT + 0x20, button)
 +    m.boundaries[PANE_UPDATE] = lambda: None
++    stub_play_done(m, seen)
 +    m.run(RELEASE_HANDLER, SCREEN, EVENT)
 +    return m.word(SCREEN + 0x204), m.word(SCREEN + 0x208)
 +
 +
-+def test_back_is_reported_while_plays_remain(badge_code):
-+    assert release(BadgeMachine(badge_code), 9, 2) == (2, 9)
++def test_back_with_plays_left_drops_them_and_reports_back(badge_code):
++    seen = []
++    assert release(BadgeMachine(badge_code), 9, 2, seen) == (2, 0xB)
++    assert seen == [("play_done", SCREEN, 1, 0xA)]  # ends now, from the state it expects
 +
 +
 +@pytest.mark.parametrize("state,button,expected", [
-+    (1, 2, (2, 2)),    # Back without a session, as before
-+    (9, 6, (6, 0xF)),  # the rabbit still works with plays left
-+    (9, 4, (0, 9)),    # L/R are not this handler's business
++    (1, 2, (2, 2)),      # Back without a session, as before
++    (9, 1, (0xA, 0xA)),  # Play still plays
++    (9, 6, (6, 0xF)),    # the rabbit still works with plays left
++    (9, 4, (0, 9)),      # L/R are not this handler's business
 +])
 +def test_other_buttons_behave_as_before(badge_code, state, button, expected):
-+    assert release(BadgeMachine(badge_code), state, button) == expected
++    seen = []
++    m = BadgeMachine(badge_code)
++    for address in (0xF4, 0xF8):  # Play's animations: objects whose vtable calls return at once
++        m.put(SCREEN + address, GETTER + 0x100)
++    m.put(GETTER + 0x100, GETTER + 0x200)
++    for slot in range(0, 0x80, 4):
++        m.put(GETTER + 0x200 + slot, GETTER + 0x300)
++    m.uc.mem_write(GETTER + 0x300, bytes.fromhex("1eff2fe1"))  # bx lr
++    assert release(m, state, button, seen) == expected
++    assert seen == []
 +
 +
 +def test_crane_records_do_not_overlap_other_records(badge_records):
@@ -340,27 +371,19 @@ index 0000000..3ce4b8d
 +    assert word(BACK_ENABLED) == 0xE3A01000  # SetDisabled(0)
 +
 +
-+def run_result(m, result, state, remaining=3):
++def run_result(m, result, state, remaining=0):
 +    """Run the hooked GetResult call with the crane task in r4."""
 +    m.uc.mem_write(GETTER, bytes.fromhex("040290e5 1eff2fe1"))  # ldr r0, [r0, #0x204]; bx lr
 +    m.put(TASK + 0x234, SCREEN)
 +    m.put(TASK + 0x19C, 0)
 +    m.put(TASK + 0x188, SESSION)
-+    m.put(0x42B28C, GLOBAL)
 +    m.put(SCREEN + 0x204, result)
 +    m.put(SCREEN + 0x208, state)
 +    m.put(SCREEN + 0x218, remaining)
 +    seen = []
-+
-+    def play_done():
-+        seen.append(("play_done", m.reg(0), m.reg(2), m.word(SCREEN + 0x208)))
-+        m.put(SCREEN + 0x218, 0)
-+        m.put(SCREEN + 0x208, 0xB)
-+
 +    m.boundaries.update({
-+        PLAY_DONE: play_done,
++        PLAY_DONE: lambda: seen.append(("play_done",)),
 +        SESSION_REMAINING: lambda: seen.append(("session_remaining", m.reg(0), m.reg(1))),
-+        GLOBAL_REMAINING: lambda: seen.append(("global_remaining", m.reg(0), m.reg(1))),
 +        SESSION_END: lambda: seen.append(("session_end", m.reg(0), m.word(SCREEN + 0x208))),
 +    })
 +    m.uc.reg_write(UC_ARM_REG_SP, STACK)
@@ -377,18 +400,30 @@ index 0000000..3ce4b8d
 +    return m.reg(0), seen
 +
 +
-+def test_back_with_plays_left_ends_the_session(badge_code):
-+    result, seen = run_result(BadgeMachine(badge_code), 2, 9)
-+    assert result == 0  # handled: no Back this frame
++def test_dropped_plays_end_the_session_and_leave(badge_code):
++    m = BadgeMachine(badge_code)
++    result, seen = run_result(m, 2, 0xB)
++    assert result == 2  # the game's Back handling runs next
 +    assert seen == [
-+        ("play_done", SCREEN, 1, 0xA),        # ends now, from the state it expects
-+        ("session_remaining", SESSION, 0),
-+        ("global_remaining", GLOBAL, 0),
-+        ("session_end", TASK, 0xB),           # the game's own end of a session
++        ("session_remaining", SESSION, 0),   # top screen counter
++        ("session_end", TASK, 0xB),          # the game's own end of a session
 +    ]
++    assert m.word(SCREEN + 0x208) == 2       # leaving, as Back in state 1
++    assert m.word(SCREEN + 0x20C) == 0xB     # previous state kept by SET_STATE
 +
 +
-+@pytest.mark.parametrize("result,state", [(2, 1), (2, 0xA), (3, 9), (0, 9), (1, 9)])
++@pytest.mark.parametrize("result,state", [(2, 2), (2, 1), (2, 9), (2, 0xA), (3, 0xB), (0, 0xB), (1, 9)])
 +def test_other_results_pass_through(badge_code, result, state):
-+    got, seen = run_result(BadgeMachine(badge_code), result, state)
++    m = BadgeMachine(badge_code)
++    got, seen = run_result(m, result, state)
 +    assert got == result and seen == []
++    assert m.word(SCREEN + 0x208) == state
++
++
++def test_back_with_plays_left_end_to_end(badge_code):
++    """Release Back in state 9, then the crane task reads the result."""
++    m = BadgeMachine(badge_code)
++    assert release(m, 9, 2) == (2, 0xB)
++    result, seen = run_result(m, 2, 0xB)
++    assert (result, m.word(SCREEN + 0x208)) == (2, 2)
++    assert [s[0] for s in seen] == ["session_remaining", "session_end"]

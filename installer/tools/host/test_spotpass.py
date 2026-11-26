@@ -37,6 +37,19 @@ def test_decrypts_like_badge_arcade_offline(tmp_path, payload):
     assert again.returncode == 0 and again.stdout.strip() == str(out)
 
 
+def test_archive_dec_file_is_unpacked(tmp_path):
+    """archive.org's .dec: the decrypted body (0x26E header bytes) before the SARC."""
+    payload = b"SARC" + bytes(range(256)) * 300
+    pack = tmp_path / "data_v131-2022-02-11-01-40-EU.dec"
+    pack.write_bytes(bytes(0x26E) + payload)
+    result = run(pack, tmp_path / "cache")
+    assert result.returncode == 0, result.stderr
+    out = Path(result.stdout.strip())
+    assert out != pack and out.read_bytes() == payload
+    again = run(pack, tmp_path / "cache")
+    assert again.returncode == 0 and again.stdout.strip() == str(out)
+
+
 def test_plain_sarc_is_used_directly(tmp_path):
     pack = tmp_path / "week.sarc"
     pack.write_bytes(synthetic_week())

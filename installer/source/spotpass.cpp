@@ -2,6 +2,7 @@
 
 #include <3ds.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -48,6 +49,35 @@ void decrypt(uint8_t* data, size_t size, std::array<uint8_t, 16>& ctr) {
 
 bool same(const std::array<uint8_t, 32>& a, const uint8_t* b) { return std::memcmp(a.data(), b, 32) == 0; }
 
+// Copies the SARC behind the decrypted headers of a .dec file into the cache.
+std::string strip_headers(FILE* in, const std::string& path, const std::string& cache_dir, const nba::Progress& progress) {
+    struct stat st{};
+    if (stat(path.c_str(), &st) || st.st_size <= static_cast<off_t>(BODY_HEADER)) throw std::runtime_error("Cannot read " + path);
+    const uint64_t size = static_cast<uint64_t>(st.st_size) - BODY_HEADER;
+    const std::string out_path = cache_dir + "/" + base_name(path) + ".sarc";
+    struct stat cached{};
+    if (stat(out_path.c_str(), &cached) == 0 && static_cast<uint64_t>(cached.st_size) == size) return out_path;
+
+    nba::mkdirs(cache_dir);
+    const std::string tmp_path = out_path + ".tmp";
+    remove(tmp_path.c_str());
+    auto out = open_file(tmp_path, "wb");
+    if (fseek(in, BODY_HEADER, SEEK_SET) != 0) throw std::runtime_error("Cannot read " + path);
+    std::vector<uint8_t> chunk(CHUNK);
+    for (uint64_t done = 0; done < size;) {
+        size_t count = static_cast<size_t>(std::min<uint64_t>(CHUNK, size - done));
+        if (fread(chunk.data(), 1, count, in) != count) throw std::runtime_error("Truncated " + base_name(path));
+        if (fwrite(chunk.data(), 1, count, out.get()) != count) throw std::runtime_error("Write failed (SD card full?)");
+        done += count;
+        if (progress) progress("Unpacking " + base_name(path), done, size);
+    }
+    if (fflush(out.get()) != 0) throw std::runtime_error("Write failed (SD card full?)");
+    out.reset();
+    remove(out_path.c_str());
+    if (rename(tmp_path.c_str(), out_path.c_str()) != 0) throw std::runtime_error("Cannot store unpacked pack");
+    return out_path;
+}
+
 }  // namespace
 
 std::string open_pack(const std::string& path, const std::string& cache_dir, const nba::Progress& progress) {
@@ -55,8 +85,14 @@ std::string open_pack(const std::string& path, const std::string& cache_dir, con
     uint8_t head[BOSS_HEADER];
     size_t got = fread(head, 1, sizeof(head), in.get());
     if (got >= 4 && std::memcmp(head, "SARC", 4) == 0) return path;  // already plain
-    if (got != sizeof(head) || std::memcmp(head, "boss", 4) != 0)
+    if (got != sizeof(head) || std::memcmp(head, "boss", 4) != 0) {
+        // archive.org's .dec files: the decrypted body, its headers still in front.
+        uint8_t magic[4] = {};
+        if (fseek(in.get(), BODY_HEADER, SEEK_SET) == 0 && fread(magic, 1, 4, in.get()) == 4 &&
+            std::memcmp(magic, "SARC", 4) == 0)
+            return strip_headers(in.get(), path, cache_dir, progress);
         throw std::runtime_error(base_name(path) + ": not a SpotPass pack or SARC");
+    }
 
     struct stat st{};
     if (stat(path.c_str(), &st) || st.st_size < 0) throw std::runtime_error("Cannot read " + path);

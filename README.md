@@ -7,7 +7,7 @@ This is based on [badge-arcade-offline v0.5.4](https://github.com/GrouchoGlasses
 | Change | Address (1.3.1) | What it does |
 |---|---|---|
 | Account check | `0x2CD6CC` (1.3.0: `0x2CD3A0`) | The save loads under any account (NNID or PNID); the next save stores the active account's ID as usual. |
-| B at the crane | 5 records (`src/bridge_crane.py`) | With paid plays left, the Back button stays available and **B** works. The remaining plays are dropped and the session ends the way the game ends it after the last play; press **B** again to leave the machine. |
+| B at the crane | 5 records (`src/bridge_crane.py`) | With paid plays left, the Back button stays available and **B** works: the remaining plays are dropped, the session ends the way the game ends it after the last play, and you leave the machine as with Back after the last play. |
 
 Everything else is identical to the official v0.5.4 release, whose build was reproduced byte for byte. The crane addresses were matched function by function in both executables, and the change is tested in badge-arcade-offline's emulator harness against the real 1.3.0 and 1.3.1 code (`tests/test_bridge_crane.py`; the whole upstream suite passes with the bridge).
 
@@ -31,14 +31,34 @@ Scan `fbi-qr-beta.png` in FBI instead to try the newest test build (it always po
 | Mode | Machines | What the app needs |
 |---|---|---|
 | Vanilla | 384 from the installed update | nothing, installs instantly |
-| Expanded | 398 + 8 bonus layouts | your installed game (read directly from the console) |
-| Week | every machine of one archived SpotPass week | your installed game, the week's pack and the badge catalog |
+| Expanded | 398 + 8 bonus layouts | three files of your installed game ([copied once with GodMode9](#game-files-once)) |
+| Week | every machine of one archived SpotPass week | the same game files, the week's pack and the badge catalog |
 
 The app builds Expanded and weeks on the console from your own game (badge-arcade-offline's native builder, ported to the 3DS) and swaps them into `luma/titles/0004000000153600/`. Building takes a few minutes; switching back to Vanilla is instant.
 
-- **Weeks and badge catalog:** put SpotPass packs (`data_v131-…-EU.enc`, `.boss`, or decrypted `.sarc`) and the full catalog `allbadge_v131…` in `SD:/3ds/pretendo-bridge/spotpass/`, then press **Y** to rescan. Encrypted packs are decrypted on the console with its own SpotPass key; no boot9 dump is needed. If your console still has SpotPass data from back then, its last week and catalog show up without any files. This project does not include or download any SpotPass data.
 - **Log:** every message, with error codes and the step that failed, goes to `SD:/3ds/pretendo-bridge/log.txt`.
-- **If the app can't read the game's files** (it uses the installed titles' RomFS), export `base-pc.sarc`, `pc.sarc` and `Schedule.xml` as in badge-arcade-offline's README (step 3) to `SD:/3ds/pretendo-bridge/input/`.
+
+#### Game files (once)
+
+Expanded and weeks are built from `pc.sarc` of the game and of the update and from the update's `Schedule.xml`. The system doesn't let a homebrew app open another game's files (error `0xD9004676`), so the installer puts a GodMode9 script on the SD card that copies them:
+
+1. Open the installer once (it writes `SD:/gm9/scripts/pretendo-bridge-export.gm9`).
+2. Power off. Hold **START** and power on to open GodMode9.
+3. Press **HOME** → **Scripts...** → **pretendo-bridge-export** and confirm. The files land in `SD:/3ds/pretendo-bridge/input/` (nothing else is written).
+4. Restart, open the installer: *Game files* shows **exported (SD card)**. Pick Expanded or a week and press **A**.
+
+Repeat this only if you reinstall the game or its update. The script is also in this repository (`installer/gm9/`).
+
+#### SpotPass weeks and the badge catalog
+
+Put the files in `SD:/3ds/pretendo-bridge/spotpass/` and press **Y** in the installer. The files must be the **EU** ones:
+
+| File | Needed for |
+|---|---|
+| `allbadge_v131-…-EU` (full badge catalog) | weeks (required), Expanded (shows older badges in the collection) |
+| `data_v131-<date>-EU` (one file per week) | one week each |
+
+The Internet Archive item *nintendo-badge-arcade-data* has the EU catalog `allbadge_v131-2017-06-23-01-40-EU` and the EU weeks of 2022-02-11 and 2022-02-18. Each file is there as `.dat`, `.dec` and `.enc`; one of them is enough (`.dat` is already decrypted; `.enc` is decrypted on the console with its own SpotPass key, no boot9 dump needed). Further weeks can be found in the SpotPass Archival Project's archive or in your own old SpotPass dumps (`.boss`). If your console still has SpotPass data from back then, its last week and catalog show up without any files. This project does not include or download any SpotPass data.
 
 ### Option 2: Universal-Updater
 
@@ -64,8 +84,8 @@ Copy `ips/<variant>/code.ips` to `SD:/luma/titles/0004000000153600/code.ips`.
 ## Limitations
 
 - **EUR, update 1.3.1 only.** USA and JPN are not supported.
-- The account bridge has been confirmed working on one console so far. B at the crane is tested in the emulator against the real game code, not yet on a console.
-- With the game's code (`BADGE_INPUT_DIR`), badge-arcade-offline's full suite passes with the bridge (490 tests); without it, CI runs the parts that need no game data.
+- The account bridge has been confirmed working on one console so far. B at the crane is tested in the emulator against the real game code; the version that leaves the machine (installer 1.1.0 beta4) is not yet confirmed on a console.
+- With the game's code (`BADGE_INPUT_DIR`), badge-arcade-offline's full suite passes with the bridge (506 tests; only upstream's check of its own release files differs, as expected); without it, CI runs the parts that need no game data.
 - An existing Reclawed patch gets replaced. This patch does not read badges that Reclawed stored only inside the game.
 - To uninstall: **X** in the installer app, *Uninstall* in the store, or delete `code.ips`.
 

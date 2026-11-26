@@ -1,0 +1,63 @@
+# Pretendo Bridge - export Badge Arcade's game files
+#
+# Copies the three files the Pretendo Bridge installer needs for Expanded
+# and SpotPass weeks to 0:/3ds/pretendo-bridge/input:
+#   base-pc.sarc  region_EUR/common/sharc/pc.sarc of the game (v1.3.0)
+#   pc.sarc       region_EUR/common/sharc/pc.sarc of update 1.3.1
+#   Schedule.xml  region_common/Schedule.xml of update 1.3.1
+# The installer can't read them itself because the system doesn't let
+# homebrew apps open another game's files.
+#
+# Run it in GodMode9: HOME button > Scripts... > pretendo-bridge-export
+# Nothing outside 0:/3ds/pretendo-bridge/input is written.
+
+set PREVIEW_MODE quick
+set OUT 0:/3ds/pretendo-bridge/input
+set PCSARC region_EUR/common/sharc/pc.sarc
+set SCHEDULE region_common/Schedule.xml
+
+ask "Pretendo Bridge\n \nCopy Badge Arcade's game files\nto /3ds/pretendo-bridge/input?\n \nTakes a few seconds."
+
+set ERRORMSG "Badge Arcade (EUR) is not installed\non this SD card."
+isdir A:/title/00040000/00153600/content
+set ERRORMSG "Update 1.3.1 for Badge Arcade\nis not installed."
+isdir A:/title/0004000e/00153600/content
+
+set ERRORMSG "Can't write to the SD card."
+mkdir -o -s $[OUT]
+isdir $[OUT]
+rm -o -s $[OUT]/base-pc.sarc
+rm -o -s $[OUT]/pc.sarc
+rm -o -s $[OUT]/Schedule.xml
+
+# Base game: the main content is the .app whose RomFS has pc.sarc.
+set ERRORMSG "Copying from the base game failed."
+for A:/title/00040000/00153600/content *.app
+    if imgmount $[FORPATH]
+        if exist G:/romfs/$[PCSARC]
+            cp -w -n G:/romfs/$[PCSARC] $[OUT]/base-pc.sarc
+        end
+        imgumount
+    end
+next
+
+# Update 1.3.1
+set ERRORMSG "Copying from the update failed."
+for A:/title/0004000e/00153600/content *.app
+    if imgmount $[FORPATH]
+        if exist G:/romfs/$[PCSARC]
+            cp -w -n G:/romfs/$[PCSARC] $[OUT]/pc.sarc
+            cp -w -n G:/romfs/$[SCHEDULE] $[OUT]/Schedule.xml
+        end
+        imgumount
+    end
+next
+
+set ERRORMSG "pc.sarc not found in the base game.\nIs it the EUR version?"
+exist $[OUT]/base-pc.sarc
+set ERRORMSG "pc.sarc not found in the update.\nIs update 1.3.1 installed?"
+exist $[OUT]/pc.sarc
+set ERRORMSG "Schedule.xml not found in the update."
+exist $[OUT]/Schedule.xml
+
+set SUCCESSMSG "Done!\n \nBack in the Pretendo Bridge installer,\nchoose Expanded or a week and press A."

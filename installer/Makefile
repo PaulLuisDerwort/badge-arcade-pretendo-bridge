@@ -31,7 +31,7 @@ VERSION_MINOR	:=	1
 VERSION_MICRO	:=	0
 # Non-empty VERSION_TAG publishes a pre-release (v<version>-<tag>); the FBI QR
 # code keeps pointing to the latest full release.
-VERSION_TAG	:=	beta3
+VERSION_TAG	:=	beta4
 VERSION		:=	$(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_MICRO)$(if $(VERSION_TAG),-$(VERSION_TAG),)
 
 META		:=	meta
@@ -72,7 +72,7 @@ export DEPSDIR	:=	$(CURDIR)/$(BUILD)
 
 CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.ips)))
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.ips))) gm9_export.gm9
 
 export LD	:=	$(CXX)
 
@@ -143,6 +143,12 @@ $(OUTPUT).elf	:	$(OFILES)
 %.ips.o	%_ips.h :	%.ips
 	@echo $(notdir $<)
 	@$(bin2o)
+
+# the GodMode9 export script the app puts on the SD card
+gm9_export.gm9.o	gm9_export_gm9.h :	$(TOPDIR)/gm9/pretendo-bridge-export.gm9
+	@echo $(notdir $<)
+	@cp $< gm9_export.gm9
+	@bin2s -a 4 -H gm9_export_gm9.h gm9_export.gm9 | $(AS) -o gm9_export.gm9.o
 
 -include $(DEPSDIR)/*.d
 

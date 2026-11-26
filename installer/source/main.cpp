@@ -7,10 +7,14 @@
  *   Expanded  - 406 machines, built here from the installed base game and update
  *   Week      - all machines of one archived SpotPass week, built here
  *
- * Expanded and weeks are generated on the console from the game's own RomFS
- * (read with romfsMountFromTitle), its SpotPass data in extdata, and packs the
- * user puts in sdmc:/3ds/pretendo-bridge/spotpass/. Nothing of the game is
- * bundled with the app; the patches (IPS) contain only the patch code.
+ * Expanded and weeks are generated on the console from three files of the
+ * installed game (pc.sarc of the game and of the update, Schedule.xml), its
+ * SpotPass data in extdata, and packs the user puts in
+ * sdmc:/3ds/pretendo-bridge/spotpass/. The app tries to read the game files
+ * with romfsMountFromTitle; on most consoles FS refuses that (0xD9004676), so
+ * the app also installs a GodMode9 script that copies them to
+ * sdmc:/3ds/pretendo-bridge/input. Nothing of the game is bundled with the
+ * app; the patches (IPS) contain only the patch code.
  *
  * builder/ is badge-arcade-offline's native catalog builder (MIT) with an
  * added Expanded mode; luma_config, luma_system and fileops come from
@@ -44,6 +48,7 @@ extern "C" {
 #include "expanded_game_ips.h"
 #include "weekly_home_ips.h"
 #include "weekly_game_ips.h"
+#include "gm9_export_gm9.h"
 
 // Keep the linear heap small (only the console framebuffers live there) so
 // the builder gets most of the application memory.
@@ -66,6 +71,8 @@ const char* const CACHE_DIR = APP_DIR "/cache";
 const char* const STAGE_DIR = APP_DIR "/build";
 const char* const INPUT_DIR = APP_DIR "/input";
 const char* const LOG_PATH = APP_DIR "/log.txt";
+const char* const GM9_SCRIPT_PATH = "sdmc:/gm9/scripts/pretendo-bridge-export.gm9";
+const char* const INPUT_FILES[] = {"/base-pc.sarc", "/pc.sarc", "/Schedule.xml"};
 const char* const LUMA_CONFIG_PATH = "sdmc:/luma/config.ini";
 const char* const LUMA_CONFIG_BACKUP = "sdmc:/luma/config.ini.pretendo-bridge.bak";
 constexpr size_t LUMA_CONFIG_MAX_SIZE = 0x2400;
@@ -132,6 +139,9 @@ struct State {
     bool inst_incomplete = false;
 
     bool extdata = false;
+    enum class Files { Missing, Console, Sd } files = Files::Missing;  // the game files Expanded/weeks need
+    Result files_error = 0;     // romfsMountFromTitle result when it failed
+    bool gm9_script = false;    // the export script is on the SD card
     std::string console_week;   // start date of extdata boss.sarc, empty if none
     bool console_allbadge = false;
     std::string sd_allbadge;    // catalog pack on the SD card, empty if none
@@ -323,12 +333,13 @@ void probe_inputs() {
         while (dirent* e = readdir(dir)) {
             std::string name = e->d_name;
             if (name == "." || name == "..") continue;
-            if (!(lower_ends(name, ".boss") || lower_ends(name, ".enc") || lower_ends(name, ".sarc") || lower_ends(name, ".dat")))
+            if (!(lower_ends(name, ".boss") || lower_ends(name, ".enc") || lower_ends(name, ".sarc") || lower_ends(name, ".dat") ||
+                  lower_ends(name, ".dec")))
                 continue;
             std::string path = std::string(PACK_DIR) + "/" + name;
             if (lower(name).find("allbadge") != std::string::npos) {
                 // Prefer a decrypted catalog if several are present.
-                if (st.sd_allbadge.empty() || lower_ends(name, ".sarc")) st.sd_allbadge = path;
+                if (st.sd_allbadge.empty() || lower_ends(name, ".sarc") || lower_ends(name, ".dat")) st.sd_allbadge = path;
                 continue;
             }
             std::string date = date_in_name(name);
@@ -341,6 +352,44 @@ void probe_inputs() {
     });
     st.modes.insert(st.modes.end(), weeks.begin(), weeks.end());
     if (sel_mode >= st.modes.size()) sel_mode = 0;
+}
+
+bool input_files_present() {
+    for (const char* f : INPUT_FILES)
+        if (!file_exists(std::string(INPUT_DIR) + f)) return false;
+    return true;
+}
+
+// Can the app read the game files itself, or did GodMode9 export them?
+void probe_game_files() {
+    st.files = State::Files::Missing;
+    st.files_error = 0;
+    if (!st.base_installed || !st.update_installed) return;
+    Result r = romfsMountFromTitle(BASE_TID, MEDIATYPE_SD, "nbatest");
+    if (R_SUCCEEDED(r)) {
+        romfsUnmount("nbatest");
+        r = romfsMountFromTitle(UPDATE_TID, MEDIATYPE_SD, "nbatest");
+        if (R_SUCCEEDED(r)) romfsUnmount("nbatest");
+    }
+    if (R_SUCCEEDED(r)) st.files = State::Files::Console;
+    else {
+        st.files_error = r;
+        if (input_files_present()) st.files = State::Files::Sd;
+    }
+}
+
+// Puts the GodMode9 export script in sdmc:/gm9/scripts (kept up to date).
+void install_gm9_script() {
+    const size_t size = gm9_export_gm9_size;
+    unsigned char* old;
+    size_t old_size;
+    if (fops_read(GM9_SCRIPT_PATH, &old, &old_size, FOPS_MAX_READ) == 0) {
+        bool same = old_size == size && memcmp(old, gm9_export_gm9, size) == 0;
+        free(old);
+        if (same) { st.gm9_script = true; return; }
+    }
+    st.gm9_script = fops_mkdirs_for(GM9_SCRIPT_PATH) == 0 && fops_write_replace(GM9_SCRIPT_PATH, gm9_export_gm9, size) == 0;
+    log_detail("GodMode9 script %s: %s", st.gm9_script ? "written" : "NOT written", GM9_SCRIPT_PATH);
 }
 
 void probe() {
@@ -358,6 +407,7 @@ void probe() {
     st.base_installed = title_version(BASE_TID, &base_version);
     st.update_version = 0;
     st.update_installed = title_version(UPDATE_TID, &st.update_version);
+    probe_game_files();
     probe_installed();
     probe_inputs();
     nba::close_read_cache();
@@ -396,6 +446,9 @@ void draw_top() {
     else if (st.update_version != UPDATE_V131) printf(" Badge Arcade  " C_RED "update v%u, needs v%u" C_RESET "\n", st.update_version, UPDATE_V131);
     else printf(" Badge Arcade  " C_GREEN "EUR, update 1.3.1" C_RESET "\n");
 
+    printf(" Game files    %s\n", st.files == State::Files::Console ? C_GREEN "readable" C_RESET
+                                  : st.files == State::Files::Sd ? C_GREEN "exported (SD card)" C_RESET
+                                  : C_YELLOW "export once with GodMode9" C_RESET);
     printf(" Installed     %s\n", installed_text().c_str());
     printf(" Catalog       %s\n", !st.sd_allbadge.empty() ? C_GREEN "SD card" C_RESET
                                   : st.console_allbadge ? C_GREEN "console" C_RESET
@@ -416,6 +469,16 @@ void draw_top() {
     printf(" START   exit\n\n");
     printf(" Weeks: put SpotPass packs (.boss/.enc/.sarc)\n");
     printf(" and allbadge_v131 in /3ds/pretendo-bridge/spotpass\n");
+}
+
+// How to get the game files when the app can't read them itself.
+void gm9_hint() {
+    log_warn("Needs the game files. Copy them once:");
+    log_info(" 1. Power off. Hold START, power on.");
+    log_info(" 2. In GodMode9 press HOME > Scripts...");
+    log_info("    > pretendo-bridge-export, confirm.");
+    log_info(" 3. Restart, open this app, press A.");
+    if (!st.gm9_script) log_warn("Can't write the script to /gm9/scripts.");
 }
 
 void describe_selection() {
@@ -441,7 +504,8 @@ void describe_selection() {
             log_warn("Needs the badge catalog (allbadge_v131) in /3ds/pretendo-bridge/spotpass.");
         break;
     }
-    log_info("Building takes a few minutes. Save data and HOME Menu badges stay as they are.");
+    if (m.kind != Kind::Vanilla && st.files == State::Files::Missing) gm9_hint();
+    else log_info("Building takes a few minutes. Save data and HOME Menu badges stay as they are.");
 }
 
 void redraw() {
@@ -544,7 +608,7 @@ bool open_inputs(Inputs& in) {
     } else if (R_SUCCEEDED(base_r)) {
         romfsUnmount("nbabase");
     }
-    // Fallback: files exported with GodMode9 (badge-arcade-offline README, step 3).
+    // Fallback: files copied by the GodMode9 script (gm9/pretendo-bridge-export.gm9).
     in.base = std::string(INPUT_DIR) + "/base-pc.sarc";
     in.update = std::string(INPUT_DIR) + "/pc.sarc";
     in.schedule = std::string(INPUT_DIR) + "/Schedule.xml";
@@ -552,9 +616,9 @@ bool open_inputs(Inputs& in) {
         log_info("Using the exported files in /3ds/pretendo-bridge/input.");
         return true;
     }
-    log_err("Can't read the game's files from the console (code 0x%08lX).",
-            (unsigned long)(R_FAILED(base_r) ? base_r : update_r));
-    log_info("Export base-pc.sarc, pc.sarc and Schedule.xml with GodMode9 to /3ds/pretendo-bridge/input.");
+    log_detail("Game files missing in %s (system refused 0x%08lX)", INPUT_DIR,
+               (unsigned long)(R_FAILED(base_r) ? base_r : update_r));
+    gm9_hint();
     return false;
 }
 
@@ -730,6 +794,7 @@ int main() {
     bool log_big = stat(LOG_PATH, &log_stat) == 0 && log_stat.st_size > 256 * 1024;
     log_file = fopen(LOG_PATH, log_big ? "w" : "a");
     mount_extdata();
+    install_gm9_script();
 
     probe();
     {
@@ -741,6 +806,8 @@ int main() {
                    st.base_installed, st.update_installed, st.update_version, extdata_mounted,
                    st.console_week.empty() ? "-" : st.console_week.c_str(), st.console_allbadge,
                    st.sd_allbadge.empty() ? "-" : st.sd_allbadge.c_str());
+        log_detail("Game files: %s (0x%08lX)", st.files == State::Files::Console ? "console"
+                   : st.files == State::Files::Sd ? "SD card" : "missing", (unsigned long)st.files_error);
     }
     redraw();
 
